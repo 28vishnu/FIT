@@ -1,0 +1,56 @@
+name: Build APK
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 21 }
+      - run: npm install
+      - run: npx cap add android
+      - name: Android setup
+        run: |
+          sed -i 's|</manifest>|<uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" /></manifest>|' android/app/src/main/AndroidManifest.xml
+          cat > android/app/src/main/java/com/mytracker/fitness/MainActivity.java <<'JAVA'
+          package com.mytracker.fitness;
+          import android.os.Bundle;
+          import com.getcapacitor.BridgeActivity;
+          public class MainActivity extends BridgeActivity {
+            @Override public void onCreate(Bundle b) {
+              super.onCreate(b);
+              getBridge().getWebView().setVerticalScrollBarEnabled(false);
+              getBridge().getWebView().setHorizontalScrollBarEnabled(false);
+              android.view.Display d = getWindowManager().getDefaultDisplay();
+              android.view.Display.Mode best = d.getMode();
+              for (android.view.Display.Mode m : d.getSupportedModes())
+                if (m.getPhysicalWidth() == best.getPhysicalWidth() && m.getPhysicalHeight() == best.getPhysicalHeight() && m.getRefreshRate() > best.getRefreshRate()) best = m;
+              android.view.WindowManager.LayoutParams lp = getWindow().getAttributes();
+              lp.preferredDisplayModeId = best.getModeId();
+              getWindow().setAttributes(lp);
+              // Match the strips around the notch and navigation bar to the system theme
+              boolean night = (getResources().getConfiguration().uiMode & 48) == 32;
+              getWindow().getDecorView().setBackgroundColor(night ? 0xFF121214 : 0xFFF2F2F7);
+              androidx.core.view.WindowInsetsControllerCompat c = androidx.core.view.WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView());
+              c.setAppearanceLightStatusBars(!night);
+              c.setAppearanceLightNavigationBars(!night);
+            }
+          }
+          JAVA
+      - name: Lock to portrait
+        run: sed -i 's|<activity|<activity android:screenOrientation="portrait"|' android/app/src/main/AndroidManifest.xml
+      - run: npx cap sync android
+      - name: Use the same signing key every build
+        run: |
+          mkdir -p ~/.android
+          if [ -f debug.keystore ]; then cp debug.keystore ~/.android/; fi
+      - run: cd android && chmod +x gradlew && ./gradlew assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FitnessTracker-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
